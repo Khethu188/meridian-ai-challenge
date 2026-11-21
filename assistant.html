@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meridian | Adviser Notes Assistant</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, Segoe UI, Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f5f8; color: #182230; }
+    header { background: #102b46; color: white; padding: 20px 28px; }
+    header h1 { margin: 0 0 5px; font-size: 21px; }
+    header p { margin: 0; color: #d7e3ef; font-size: 13px; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 18px; }
+    .panel { background: white; border: 1px solid #e0e6ed; border-radius: 12px; padding: 20px; margin-bottom: 18px; box-shadow: 0 2px 8px #102b460c; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    .hint { color: #586779; font-size: 13px; line-height: 1.5; }
+    textarea { width: 100%; min-height: 170px; resize: vertical; border: 1px solid #cbd5df; border-radius: 8px; padding: 12px; font: inherit; line-height: 1.5; }
+    input[type=file] { display: block; margin: 12px 0; max-width: 100%; }
+    button { border: 0; border-radius: 7px; background: #1769aa; color: white; padding: 11px 16px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .secondary { background: #e8eef4; color: #19334d; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    #status { margin-top: 12px; font-size: 13px; white-space: pre-wrap; }
+    .ok { color: #176b42; } .error { color: #b42318; }
+    iframe { width: 100%; height: 900px; border: 1px solid #d6dee7; border-radius: 10px; background: white; }
+    @media (max-width: 600px) { header { padding: 18px; } .panel { padding: 15px; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Meridian Adviser Notes Assistant</h1>
+  <p>Turn adviser notes or a voice recording into a draft proposal.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>1. Add adviser notes or a voice recording</h2>
+    <p class="hint">Type or paste notes below, or upload an audio recording (MP3, WAV, M4A, AAC, OGG, WEBM or FLAC; maximum 20 MB). The transcript will be shown for review before proposal generation.</p>
+    <label for="audio"><strong>Upload voice recording</strong></label>
+    <input id="audio" type="file" accept="audio/*">
+    <div class="actions">
+      <button id="transcribeBtn" class="secondary" type="button">Transcribe recording</button>
+    </div>
+    <p style="margin:18px 0 8px"><strong>Adviser notes / transcript</strong></p>
+    <textarea id="notes" placeholder="Paste adviser notes here, or upload and transcribe a voice recording..."></textarea>
+    <div class="actions">
+      <button id="generateBtn" type="button">Generate draft proposal</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Review and complete the proposal</h2>
+    <p class="hint">The draft opens in the existing Meridian proposal generator. Review all extracted details and confirm anything marked as missing or uncertain before using the proposal.</p>
+    <iframe id="generator" title="Meridian proposal generator" src="/generator"></iframe>
+  </section>
+</main>
+<script>
+const notesEl = document.getElementById('notes');
+const statusEl = document.getElementById('status');
+const transcribeBtn = document.getElementById('transcribeBtn');
+const generateBtn = document.getElementById('generateBtn');
+const generatorFrame = document.getElementById('generator');
+
+function showStatus(message, kind = '') {
+  statusEl.textContent = message;
+  statusEl.className = kind;
+}
+async function readError(response) {
+  const data = await response.json().catch(() => ({}));
+  throw new Error(data.error || `Request failed (${response.status})`);
+}
+
+transcribeBtn.addEventListener('click', async () => {
+  const file = document.getElementById('audio').files[0];
+  if (!file) return showStatus('Choose an audio recording first.', 'error');
+  const form = new FormData();
+  form.append('audio', file);
+  transcribeBtn.disabled = true;
+  showStatus('Transcribing recording…');
+  try {
+    const response = await fetch('/transcribe', { method: 'POST', body: form });
+    if (!response.ok) await readError(response);
+    const data = await response.json();
+    notesEl.value = data.transcript || '';
+    showStatus('Transcription complete. Review and correct the transcript before generating the proposal.', 'ok');
+  } catch (error) {
+    showStatus(error.message, 'error');
+  } finally {
+    transcribeBtn.disabled = false;
+  }
+});
+
+generateBtn.addEventListener('click', async () => {
+  const notes = notesEl.value.trim();
+  if (!notes) return showStatus('Enter adviser notes or transcribe a recording first.', 'error');
+  generateBtn.disabled = true;
+  showStatus('Extracting proposal details…');
+  try {
+    const response = await fetch('/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes })
+    });
+    if (!response.ok) await readError(response);
+    const proposal = await response.json();
+    const frameWindow = generatorFrame.contentWindow;
+    if (!frameWindow || typeof frameWindow.loadProposal !== 'function') {
+      throw new Error('The proposal generator is not ready. Wait for it to finish loading, then try again.');
+    }
+    frameWindow.loadProposal(proposal);
+    showStatus('Draft created in the Meridian proposal generator. Review all fields before use.', 'ok');
+    generatorFrame.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (error) {
+    showStatus(error.message, 'error');
+  } finally {
+    generateBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
